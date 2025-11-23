@@ -1,61 +1,63 @@
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder, Result};
-use sqlx::PgPool;
-use models::{User, NewUser};
+use actix_web::{web, App, HttpServer, HttpResponse};
+use actix_files as fs;
+use actix_cors::Cors;
+use dotenvy::dotenv;
+use std::env;
 
+mod db;
 mod models;
-mod database;
+mod handlers;
+mod auth;
+mod services;
+mod routes;
+mod middleware;
 
-#[get("/")]
-async fn hello() -> impl Responder {
-    HttpResponse::Ok().body("Hello World")
-}
-
-async fn manual_hello() -> impl Responder {
-    HttpResponse::Ok().body("Ini Hey Hello")
-}
-
-#[post("/echo")]
-async fn echo(req_body: String) -> impl Responder {
-    HttpResponse::Ok().body(req_body)
-}
-
-#[get("/users")]
-async fn get_users(pool: web::Data<PgPool>) -> Result<impl Responder> {
-    let users = sqlx::query_as::<_, User>("SELECT id, name, email FROM users")
-        .fetch_all(pool.get_ref())
-        .await
-        .map_err(|e| actix_web::error::ErrorInternalServerError(e))?;
-    Ok(HttpResponse::Ok().json(users))
-}
-
-#[post("/users")]
-async fn create_user(pool: web::Data<PgPool>, new_user: web::Json<NewUser>) -> Result<impl Responder> {
-    let user = sqlx::query_as::<_, User>(
-        "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id, name, email"
-    )
-    .bind(&new_user.name)
-    .bind(&new_user.email)
-    .fetch_one(pool.get_ref())
-    .await
-    .map_err(|e| actix_web::error::ErrorInternalServerError(e))?;
-    Ok(HttpResponse::Created().json(user))
-}
+#[cfg(test)]
+mod tests;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let pool = database::establish_connection().await.expect("Failed to connect to database");
-    println!("Database connected!");
-    println!("server berjalan di http://localhost:8080");
+    dotenv().ok();
+    // env_logger::init(); // Replaced by file logger
+
+    // Initialize File Logger
+    let _guard = middleware::logger::init_file_logger();
+
+    // Initialize Database
+    let pool: sqlx::AnyPool = db::init_db().await;
+    let data_pool = web::Data::new(pool);
+
+    // Initialize Redis
+    let redis_pool = services::redis::init_redis().await;
+    let data_redis = web::Data::new(redis_pool.clone()); // clone client (cheap)
+
+    // Rate Limiter
+    let limiter = middleware::limiter::RateLimit { pool: redis_pool.clone() };
+
+    // Create directories if they don't exist
+    std::fs::create_dir_all("uploads").unwrap();
+    std::fs::create_dir_all("static").unwrap();
+
+    let port = env::var("PORT").unwrap_or("8080".to_string());
+    println!("Starting server on port {}", port);
+
     HttpServer::new(move || {
+        let cors = Cors::permissive();
+
         App::new()
-            .app_data(web::Data::new(pool.clone()))
-            .service(hello)
-            .service(echo)
-            .service(get_users)
-            .service(create_user)
-            .route("/hey", web::get().to(manual_hello))
+            .wrap(cors)
+            .wrap(limiter.clone()) // Rate Limiter Global
+            .wrap(middleware::auth::JwtAuth) // Global Auth Middleware (logic inside skips public routes)
+            .app_data(data_pool.clone())
+            .app_data(data_redis.clone())
+            // Static files
+            .service(fs::Files::new("/static", "./static").show_files_listing())
+            .service(fs::Files::new("/uploads", "./uploads").show_files_listing())
+            // API Routes
+            .route("/", web::get().to(|| async { HttpResponse::Ok().body("Anime Streaming API Running") }))
+            .configure(routes::config)
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(format!("0.0.0.0:{}", port))?
     .run()
     .await
 }
