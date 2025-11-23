@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <!-- Pico.css for nice default styles -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+    <style>
+        .container { max-width: 1200px; }
+        .grid-custom { display: grid; grid-template-columns: 1fr 3fr; gap: 20px; }
+        .sidebar { background: #11191f; padding: 20px; border-radius: 8px; height: 100vh; }
+        .sidebar button { width: 100%; margin-bottom: 10px; text-align: left; }
+        .content-panel { display: none; }
+        .active-panel { display: block; }
+        .card { padding: 20px; background: #141e26; border-radius: 8px; margin-bottom: 20px; }
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+        .checkbox-group { display: flex; flex-wrap: wrap; gap: 10px; max-height: 150px; overflow-y: auto; background: #222; padding: 10px; border-radius: 4px; }
+        .checkbox-group label { display: flex; align-items: center; gap: 5px; font-size: 0.9em; width: auto; }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <div id="auth-section">
+            <article>
+                <header>Login to Admin Panel</header>
+                <form id="login-form">
+                    <input type="text" id="username" placeholder="Username" required>
+                    <input type="password" id="password" placeholder="Password" required>
+                    <button type="submit">Login</button>
+                </form>
+            </article>
+        </div>
+
+        <div id="dashboard" class="grid-custom" style="display:none;">
+            <aside class="sidebar">
+                <h3>Admin</h3>
+                <button onclick="showPanel('metrics-panel')">Dashboard</button>
+                <button onclick="showPanel('content-panel')">Manage Content</button>
+                <button onclick="showPanel('upload-panel')">Upload Video</button>
+                <button onclick="showPanel('users-panel')">Users</button>
+                <button onclick="logout()" class="secondary">Logout</button>
+            </aside>
+
+            <section>
+                <!-- Metrics Panel -->
+                <div id="metrics-panel" class="content-panel active-panel">
+                    <h2>System Metrics</h2>
+                    <div class="stat-grid" id="metrics-display">Loading...</div>
+                </div>
+
+                <!-- Content Management Panel -->
+                <div id="content-panel" class="content-panel">
+                    <h2>Manage Content</h2>
+                    <article>
+                        <header>Add New Content</header>
+                        <form id="add-content-form">
+                            <div class="grid">
+                                <input type="text" id="title" placeholder="Title" required>
+                                <select id="type">
+                                    <option value="Anime">Anime</option>
+                                    <option value="Donghua">Donghua</option>
+                                    <option value="Movie">Movie</option>
+                                </select>
+                            </div>
+                            <textarea id="desc" placeholder="Description"></textarea>
+                            <div class="grid">
+                                <select id="status">
+                                    <option value="Ongoing">Ongoing</option>
+                                    <option value="Tamat">Completed</option>
+                                </select>
+                                <select id="schedule">
+                                    <option value="">No Schedule</option>
+                                    <option value="Monday">Monday</option>
+                                    <option value="Tuesday">Tuesday</option>
+                                    <option value="Wednesday">Wednesday</option>
+                                    <option value="Thursday">Thursday</option>
+                                    <option value="Friday">Friday</option>
+                                    <option value="Saturday">Saturday</option>
+                                    <option value="Sunday">Sunday</option>
+                                </select>
+                                <input type="number" id="rating" placeholder="Rating (0-10)" step="0.1" min="0" max="10">
+                            </div>
+
+                            <label>Genres:</label>
+                            <div class="checkbox-group" id="genre-list">
+                                Loading Genres...
+                            </div>
+
+                            <button type="submit" style="margin-top: 15px;">Create Content</button>
+                        </form>
+                    </article>
+
+                    <h3>Existing Content</h3>
+                    <input type="search" id="search-content" placeholder="Search..." onkeyup="searchContent()">
+                    <table role="grid">
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Type</th>
+                                <th>Genres</th>
+                                <th>Rating</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="content-list"></tbody>
+                    </table>
+                </div>
+
+                <!-- Upload Panel -->
+                <div id="upload-panel" class="content-panel">
+                    <h2>Upload & Attach Episode</h2>
+                    <article>
+                        <form id="upload-form">
+                            <label>Series/Movie ID (Copy from Content List)</label>
+                            <input type="text" id="series_id" required>
+
+                            <label>Episode Title</label>
+                            <input type="text" id="ep_title" required>
+
+                            <label>Episode Number</label>
+                            <input type="number" id="ep_num" value="1" required>
+
+                            <label>Video File</label>
+                            <input type="file" id="video_file" required>
+
+                            <button type="submit" id="upload-btn">Upload</button>
+                        </form>
+                        <div id="upload-status"></div>
+                    </article>
+                </div>
+
+                <!-- Users Panel -->
+                <div id="users-panel" class="content-panel">
+                    <h2>Manage Users</h2>
+                    <table role="grid">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Role</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-list"></tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script>
+        const API = '/api';
+        let token = localStorage.getItem('token');
+
+        if (token) init();
+
+        function init() {
+            document.getElementById('auth-section').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'grid';
+            loadMetrics();
+            loadGenres();
+            loadContent();
+            loadUsers();
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            location.reload();
+        }
+
+        function showPanel(id) {
+            document.querySelectorAll('.content-panel').forEach(el => el.classList.remove('active-panel'));
+            document.getElementById(id).classList.add('active-panel');
+        }
+
+        // --- Auth ---
+        document.getElementById('login-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const u = document.getElementById('username').value;
+            const p = document.getElementById('password').value;
+            const res = await fetch(`${API}/login`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: u, password: p})
+            });
+            const data = await res.json();
+            if (data.token) {
+                localStorage.setItem('token', data.token);
+                token = data.token;
+                init();
+            } else {
+                alert('Login failed');
+            }
+        };
+
+        // --- Metrics ---
+        async function loadMetrics() {
+            const res = await fetch(`${API}/admin/metrics`);
+            const data = await res.json();
+            document.getElementById('metrics-display').innerHTML = `
+                <article><strong>Load Avg</strong><br>${data.load_avg}</article>
+                <article><strong>Memory</strong><br>${Math.round(data.memory_used_kb/1024)} / ${Math.round(data.memory_total_kb/1024)} MB</article>
+                <article><strong>Disk Free</strong><br>${Math.round(data.disk_free_kb/1024/1024)} GB</article>
+            `;
+        }
+
+        // --- Content & Genres ---
+        async function loadGenres() {
+            const res = await fetch(`${API}/genres`);
+            const data = await res.json();
+            const container = document.getElementById('genre-list');
+            container.innerHTML = '';
+            data.forEach(g => {
+                const label = document.createElement('label');
+                label.innerHTML = `<input type="checkbox" name="genres" value="${g.id}"> ${g.name}`;
+                container.appendChild(label);
+            });
+        }
+
+        async function loadContent() {
+            const res = await fetch(`${API}/all`);
+            const data = await res.json();
+            renderContentList(data);
+        }
+
+        async function searchContent() {
+            const q = document.getElementById('search-content').value;
+            const res = await fetch(`${API}/search?q=${q}`);
+            const data = await res.json();
+            renderContentList(data);
+        }
+
+        function renderContentList(data) {
+            const tbody = document.getElementById('content-list');
+            tbody.innerHTML = '';
+            data.forEach(item => {
+                const genres = item.genres ? item.genres.map(g => g.name).join(', ') : '-';
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${item.title} <small>(${item.id})</small></td>
+                    <td>${item.content_type}</td>
+                    <td>${genres}</td>
+                    <td>${item.rating || 0}</td>
+                    <td>${item.status}</td>
+                    <td>
+                        <button class="outline secondary" onclick="deleteContent('${item.id}')">Delete</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        document.getElementById('add-content-form').onsubmit = async (e) => {
+            e.preventDefault();
+
+            // Collect Genres
+            const checkboxes = document.querySelectorAll('input[name="genres"]:checked');
+            const genre_ids = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+            const payload = {
+                title: document.getElementById('title').value,
+                description: document.getElementById('desc').value,
+                content_type: document.getElementById('type').value,
+                status: document.getElementById('status').value,
+                schedule_day: document.getElementById('schedule').value || null,
+                rating: parseFloat(document.getElementById('rating').value) || 0.0,
+                genre_ids: genre_ids
+            };
+
+            await fetch(`${API}/admin/anime`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            alert('Created');
+            loadContent();
+        };
+
+        async function deleteContent(id) {
+            if(!confirm('Delete?')) return;
+            await fetch(`${API}/admin/anime/${id}`, { method: 'DELETE' });
+            loadContent();
+        }
+
+        // --- Upload ---
+        document.getElementById('upload-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('upload-btn');
+            const status = document.getElementById('upload-status');
+            btn.disabled = true;
+            status.innerText = "Uploading...";
+
+            const formData = new FormData();
+            formData.append('file', document.getElementById('video_file').files[0]);
+
+            try {
+                const upRes = await fetch(`${API}/admin/upload`, { method: 'POST', body: formData });
+                const upData = await upRes.json();
+
+                if (upData.path) {
+                    status.innerText = "Creating Episode Meta...";
+                    const meta = {
+                        series_id: document.getElementById('series_id').value,
+                        title: document.getElementById('ep_title').value,
+                        episode_number: parseInt(document.getElementById('ep_num').value),
+                    };
+                    await fetch(`${API}/admin/episode?path=${encodeURIComponent(upData.path)}`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(meta)
+                    });
+                    status.innerText = "Success!";
+                    document.getElementById('upload-form').reset();
+                } else {
+                    status.innerText = "Upload Failed";
+                }
+            } catch(err) {
+                status.innerText = "Error: " + err;
+            }
+            btn.disabled = false;
+        };
+
+        // --- Users ---
+        async function loadUsers() {
+            const res = await fetch(`${API}/admin/users`);
+            const data = await res.json();
+            const tbody = document.getElementById('users-list');
+            tbody.innerHTML = '';
+            data.forEach(u => {
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${u.username}</td>
+                        <td>${u.role}</td>
+                        <td><button class="outline secondary" onclick="deleteUser('${u.id}')">Del</button></td>
+                    </tr>
+                `;
+            });
+        }
+
+        async function deleteUser(id) {
+            if(!confirm('Delete User?')) return;
+            await fetch(`${API}/admin/users/${id}`, { method: 'DELETE' });
+            loadUsers();
+        }
+
+    </script>
+</body>
+</html>
